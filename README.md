@@ -20,4 +20,5 @@ uvicorn app.api:app --reload
 ## 5. python version
 
 Python 3.11.9
-# ragToy
+
+현재 scikit-learn 사용중인데 torch가 좋음
