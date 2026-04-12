@@ -1,0 +1,23 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+
+prefect>=3
+
+unstructured[pdf]   // PDF 전체 파싱 기능
+unstructured-inference
+pdfminer.six        // 텍스트 추출 핵심
+pillow              // 이미지 기반 PDF처리
+pi-heif             // 일부 이미지 포맷 호환
+
+sentence-transformers
+faiss-cpu
+
+python-dotenv
+pandas
+pyarrow
+requests
+
+ragas
+datasets

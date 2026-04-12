@@ -1,0 +1,24 @@
+# Python virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables
+.env
+
+# Build / IDE
+.vscode/
+.idea/
+
+# RAG generated data
+data/faiss.index
+data/chunks.parquet
+data/rag.db
+
+# OS
+.DS_Store
+Thumbs.db
