@@ -15,9 +15,9 @@ SQLITE_PATH = PROCESSED_DIR / "meta.db"
 
 EMBED_MODEL_NAME = "BAAI/bge-m3"
 
-LLM_API_URL = os.getenv("LLM_API_URL", "")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "")
+LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:11434/v1/chat/completions")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama3.2:1b")
 
 TOP_K = int(os.getenv("TOP_K", "4"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "700"))

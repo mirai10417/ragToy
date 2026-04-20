@@ -2,6 +2,7 @@ import re
 from fastapi import FastAPI
 from app.schemas import AskRequest, AskResponse, SourceChunk
 from app.retrieve import retrieve
+from app.llm import generate_answer
 
 app = FastAPI(title="RAG Toy MVP")
 
@@ -249,10 +250,17 @@ def ask(req: AskRequest):
 
     num_match = re.search(r"\d{4}", req.question)
 
+    # LLM에는 너무 긴 context를 다 주지 않도록 제한
+    contexts = [r["text"][:500] for r in retrieved[:2]]
+
     if num_match:
         answer = extract_name_answers(retrieved, num_match.group(0))
     else:
-        answer = extract_general_answer(req.question, retrieved)
+        try:
+            answer = generate_answer(req.question, contexts)
+        except Exception as e:
+            print("LLM ERROR:", repr(e))
+            answer = f"LLM 오류: {repr(e)}"
 
     return AskResponse(
         question=req.question,
