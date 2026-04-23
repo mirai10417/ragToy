@@ -1,51 +1,49 @@
-def semantic_chunk(elements, max_length: int = 500):
+def semantic_chunk(elements, max_length: int = 700, overlap: int = 100):
     chunks = []
-    buffer = ""
     current_source = None
     current_page = None
+    page_texts = []
+
+    def flush_page_texts(source, page, texts):
+        joined = " ".join(t.strip() for t in texts if t.strip())
+        if not joined:
+            return
+
+        start = 0
+        while start < len(joined):
+            end = start + max_length
+            chunk_text = joined[start:end].strip()
+            if chunk_text:
+                chunks.append({
+                    "source": source,
+                    "page": page,
+                    "text": chunk_text
+                })
+            if end >= len(joined):
+                break
+            start += max_length - overlap
 
     for elem in elements:
-        if isinstance(elem, dict):
-            text = elem.get("text", "")
-            source = elem.get("source")
-            page = elem.get("page")
-        else:
-            text = str(elem)
-            source = None
-            page = None
+        text = elem.get("text", "").strip()
+        source = elem.get("source")
+        page = elem.get("page")
 
-        text = text.strip()
         if not text:
             continue
 
-        # 새 페이지/새 source로 넘어가면 기존 buffer 저장
-        if buffer and (source != current_source or page != current_page):
-            chunks.append({
-                "source": current_source,
-                "page": current_page,
-                "text": buffer
-            })
-            buffer = ""
+        if current_page is None:
+            current_source = source
+            current_page = page
 
-        current_source = source
-        current_page = page
+        if source != current_source or page != current_page:
+            flush_page_texts(current_source, current_page, page_texts)
+            page_texts = []
+            current_source = source
+            current_page = page
 
-        if len(buffer) + len(text) + 1 <= max_length:
-            buffer = f"{buffer} {text}".strip()
-        else:
-            if buffer:
-                chunks.append({
-                    "source": current_source,
-                    "page": current_page,
-                    "text": buffer
-                })
-            buffer = text
+        page_texts.append(text)
 
-    if buffer:
-        chunks.append({
-            "source": current_source,
-            "page": current_page,
-            "text": buffer
-        })
+    if page_texts:
+        flush_page_texts(current_source, current_page, page_texts)
 
     return chunks

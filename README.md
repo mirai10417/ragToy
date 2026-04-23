@@ -32,17 +32,33 @@ docker run -d --name ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 현재 scikit-learn 사용중인데 torch가 좋음
 
 
+
+{
+  "question": "대출만기 및 거치기간",
+  "top_k": 2
+}
+
+{
+  "question": "상환방식은?",
+  "top_k": 2
+}
+
 {
   "question": "6842는 누구야?",
+  "top_k": 10
+}
+
+{
+  "question": "배당금총액(원)은 얼마야?",
   "top_k": 2
 }
 
 {
-  "question": "sample3.pdf에서 배당금총액(원)은 얼마야?",
+  "question": "배당금지급 예정일자는?",
   "top_k": 2
 }
 
 {
-  "question": "sample3.pdf에서 배당금지급 예정일자는?",
-  "top_k": 2
+  "question": "현금 ·현물배당 결정 공고 회사는 어디야?",
+  "top_k": 10
 }

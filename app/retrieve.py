@@ -1,10 +1,49 @@
 import re
+import pandas as pd
 from app.indexer import load_chunks_parquet, load_faiss_index
 from app.embed import embed_query
 
 
+def normalize_text(text: str) -> str:
+    return re.sub(r"\s+", "", str(text)).lower()
+
+
+def get_question_keywords(question: str) -> list[str]:
+    q = re.sub(r"sample\d+\.pdf|sample\d+", "", question, flags=re.IGNORECASE)
+    stopwords = ["에서", "의", "를", "을", "은", "는", "이", "가", "얼마야", "뭐야", "무엇", "알려줘", "있어", "?"]
+    for sw in stopwords:
+        q = q.replace(sw, " ")
+    return [x.strip() for x in q.split() if x.strip()]
+
+
+def compute_keyword_score(text: str, keywords: list[str]) -> int:
+    score = 0
+    norm_text = normalize_text(text)
+
+    # 1) 키워드 매칭
+    for kw in keywords:
+        if normalize_text(kw) in norm_text:
+            score += 3
+
+    # 2) 숫자 포함 → 값일 확률 높음
+    if re.search(r"\d+", text):
+        score += 3
+
+    # 3) 단위 포함 → 진짜 답일 확률 높음
+    if re.search(r"(년|개월|억원|원|%)", text):
+        score += 2
+
+    # 4) 너무 짧으면 감점 (목차 방지)
+    if len(text) < 30:
+        score -= 2
+
+    return score
+
+
 def retrieve(question: str, top_k: int = 3):
     df = load_chunks_parquet()
+    if df.empty:
+        return []
 
     source_filter = None
     m = re.search(r"(sample\d+\.pdf|sample\d+)", question, re.IGNORECASE)
@@ -13,46 +52,46 @@ def retrieve(question: str, top_k: int = 3):
         if not source_filter.endswith(".pdf"):
             source_filter += ".pdf"
 
-    # 1) source_filter가 있으면 exact match는 해당 source 안에서 먼저 시도
     working_df = df.copy()
-    if source_filter and "source" in df.columns:
+
+    if source_filter:
         filtered = working_df[
             working_df["source"].fillna("").str.lower() == source_filter.lower()
         ].copy()
         if not filtered.empty:
             working_df = filtered
 
-    # 2) 숫자 exact match 우선 처리
-    num_match = re.search(r"\d{4}", question)
-    if num_match:
-        target_num = num_match.group(0)
-        exact_rows = working_df[
-            working_df["text"].fillna("").str.contains(target_num, na=False)
-        ].copy()
+    # 🔥 핵심: 키워드 기반 + 점수 계산
+    keywords = get_question_keywords(question)
 
-        if not exact_rows.empty:
-            results = []
-            for rank, (_, row) in enumerate(exact_rows.head(top_k).iterrows(), start=1):
-                page_val = row.get("page")
-                results.append({
-                    "rank": rank,
-                    "source": row.get("source"),
-                    "page": int(page_val) if page_val is not None else None,
-                    "text": row["text"],
-                    "score": 1.0,
-                })
-            return results
+    working_df["score"] = working_df["text"].apply(
+        lambda t: compute_keyword_score(t, keywords)
+    )
 
-    # 3) FAISS 검색
+    keyword_hits = working_df[working_df["score"] > 0].copy()
+
+    if not keyword_hits.empty:
+        keyword_hits = keyword_hits.sort_values(
+            by=["score", "page", "chunk_index"],
+            ascending=[False, True, True]
+        )
+
+        results = []
+        for rank, (_, row) in enumerate(keyword_hits.head(top_k).iterrows(), start=1):
+            page_val = row.get("page")
+            results.append({
+                "rank": rank,
+                "source": row.get("source"),
+                "page": int(page_val) if pd.notna(page_val) else None,
+                "text": row["text"],
+                "score": float(row["score"]),
+            })
+        return results
+
+    # fallback: FAISS
     query_vec = embed_query(question).astype("float32")
     index = load_faiss_index()
-
-    total_rows = len(df)
-    if total_rows == 0:
-        return []
-
-    # source_filter 후처리 때문에 후보를 넉넉히 조회
-    search_k = min(max(top_k * 5, 20), total_rows)
+    search_k = min(max(top_k * 5, 20), len(df))
     scores, indices = index.search(query_vec, search_k)
 
     results = []
@@ -62,44 +101,16 @@ def retrieve(question: str, top_k: int = 3):
 
         row = df.iloc[idx]
 
-        # source_filter는 검색 후 결과에서 걸러냄
-        if source_filter:
-            row_source = str(row.get("source", "")).lower()
-            if row_source != source_filter.lower():
-                continue
-
         page_val = row.get("page")
         results.append({
             "rank": len(results) + 1,
             "source": row.get("source"),
-            "page": int(page_val) if page_val is not None else None,
+            "page": int(page_val) if pd.notna(page_val) else None,
             "text": row["text"],
             "score": float(score),
         })
 
         if len(results) >= top_k:
             break
-
-    # source_filter 때문에 top_k를 못 채웠으면 전체 검색 결과라도 반환
-    if not results and source_filter:
-        fallback_k = min(top_k, total_rows)
-        scores, indices = index.search(query_vec, fallback_k)
-
-        for score, idx in zip(scores[0], indices[0]):
-            if idx < 0:
-                continue
-
-            row = df.iloc[idx]
-            page_val = row.get("page")
-            results.append({
-                "rank": len(results) + 1,
-                "source": row.get("source"),
-                "page": int(page_val) if page_val is not None else None,
-                "text": row["text"],
-                "score": float(score),
-            })
-
-            if len(results) >= top_k:
-                break
 
     return results
