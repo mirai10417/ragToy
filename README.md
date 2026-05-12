@@ -32,6 +32,8 @@ docker run -d --name ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 현재 scikit-learn 사용중인데 torch가 좋음
 
 
+────────────────────────────────────────────────────────────────────────────────────────────────
+문서 기반 질문
 
 {
   "question": "대출만기 및 거치기간",
@@ -59,6 +61,44 @@ docker run -d --name ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 }
 
 {
-  "question": "현금 ·현물배당 결정 공고 회사는 어디야?",
+  "question": "receipt.pdf에서 주문번호 뭐야?",
   "top_k": 10
 }
+
+{
+  "question": "receipt.pdf에서 20210220 보이니?",
+  "top_k": 10
+}
+
+────────────────────────────────────────────────────────────────────────────────────────────────
+LLM 기반 질문
+
+{
+  "question": "검색 증강 생성이 뭐야?",
+  "top_k": 3
+}
+
+{
+  "question": "OCR이 왜 필요한지 쉽게 설명해줘",
+  "top_k": 3
+}
+
+────────────────────────────────────────────────────────────────────────────────────────────────
+
+python 설치
+pip install pdf2image pytesseract pillow
+
+pytesseract → OCR 엔진
+pdf2image → PDF를 이미지로 바꾸는 도구
+pdf2image는 Windows에서 Poppler가 필요함
+
+
+https://github.com/UB-Mannheim/tesseract/wiki
+	tesseract-ocr-w64-setup-5.5.0.20241111.exe (64 bit)
+
+poppler
+	https://github.com/oschwartz10612/poppler-windows/releases/tag/v24.07.0-0
+		시스템 환경 변수 추가
+		C:\Users\yhs\Downloads\Release-24.07.0-0\poppler-24.07.0\Library\bin
+
+※ 환경변수에 안잡고 py파일에 하드코딩으로 경로 잡아도 된다.

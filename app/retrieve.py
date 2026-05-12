@@ -8,17 +8,54 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", "", str(text)).lower()
 
 
+def normalize_price_text(text: str) -> str:
+    text = str(text)
+    text = text.replace(",", "")
+    text = re.sub(r"\s+", "", text)
+    return text.lower()
+
+
+def extract_price(question: str) -> str | None:
+    match = re.search(r"(\d[\d,]*)\s*원?", question)
+    if not match:
+        return None
+    return match.group(1).replace(",", "")
+
+
+def extract_source_filter(question: str) -> str | None:
+    match = re.search(r"([a-zA-Z0-9_\-]+\.pdf)", question, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    match = re.search(r"(sample\d+)", question, re.IGNORECASE)
+    if match:
+        return f"{match.group(1)}.pdf"
+
+    return None
+
+
 def get_question_keywords(question: str) -> list[str]:
-    q = re.sub(r"sample\d+\.pdf|sample\d+", "", question, flags=re.IGNORECASE)
-    stopwords = ["에서", "의", "를", "을", "은", "는", "이", "가", "얼마야", "뭐야", "무엇", "알려줘", "있어", "?"]
+    q = question
+
+    # 파일명 제거
+    q = re.sub(r"([a-zA-Z0-9_\-]+\.pdf)", " ", q, flags=re.IGNORECASE)
+    q = re.sub(r"(sample\d+)", " ", q, flags=re.IGNORECASE)
+
+    # 불용어 제거
+    stopwords = [
+        "에서", "의", "를", "을", "은", "는", "이", "가",
+        "얼마야", "뭐야", "무엇", "알려줘", "있어", "짜리", "인가", "이야", "?"
+    ]
     for sw in stopwords:
         q = q.replace(sw, " ")
+
     return [x.strip() for x in q.split() if x.strip()]
 
 
-def compute_keyword_score(text: str, keywords: list[str]) -> int:
+def compute_keyword_score(text: str, keywords: list[str], target_price: str | None = None) -> int:
     score = 0
     norm_text = normalize_text(text)
+    norm_price_text = normalize_price_text(text)
 
     # 1) 키워드 매칭
     for kw in keywords:
@@ -33,9 +70,17 @@ def compute_keyword_score(text: str, keywords: list[str]) -> int:
     if re.search(r"(년|개월|억원|원|%)", text):
         score += 2
 
-    # 4) 너무 짧으면 감점 (목차 방지)
+    # 4) 질문에 가격이 있으면 강하게 반영
+    if target_price and target_price in norm_price_text:
+        score += 10
+
+    # 5) 너무 짧은 텍스트는 약간 감점
+    # 단, 가격이 일치하는 경우는 감점을 약하게
     if len(text) < 30:
-        score -= 2
+        if target_price and target_price in norm_price_text:
+            score -= 1
+        else:
+            score -= 2
 
     return score
 
@@ -45,12 +90,8 @@ def retrieve(question: str, top_k: int = 3):
     if df.empty:
         return []
 
-    source_filter = None
-    m = re.search(r"(sample\d+\.pdf|sample\d+)", question, re.IGNORECASE)
-    if m:
-        source_filter = m.group(1)
-        if not source_filter.endswith(".pdf"):
-            source_filter += ".pdf"
+    source_filter = extract_source_filter(question)
+    target_price = extract_price(question)
 
     working_df = df.copy()
 
@@ -61,19 +102,29 @@ def retrieve(question: str, top_k: int = 3):
         if not filtered.empty:
             working_df = filtered
 
-    # 🔥 핵심: 키워드 기반 + 점수 계산
     keywords = get_question_keywords(question)
 
     working_df["score"] = working_df["text"].apply(
-        lambda t: compute_keyword_score(t, keywords)
+        lambda t: compute_keyword_score(t, keywords, target_price)
     )
 
     keyword_hits = working_df[working_df["score"] > 0].copy()
 
+    sort_columns = ["score"]
+    ascending_values = [False]
+
+    if "page" in keyword_hits.columns:
+        sort_columns.append("page")
+        ascending_values.append(True)
+
+    if "chunk_index" in keyword_hits.columns:
+        sort_columns.append("chunk_index")
+        ascending_values.append(True)
+
     if not keyword_hits.empty:
         keyword_hits = keyword_hits.sort_values(
-            by=["score", "page", "chunk_index"],
-            ascending=[False, True, True]
+            by=sort_columns,
+            ascending=ascending_values
         )
 
         results = []
@@ -100,8 +151,8 @@ def retrieve(question: str, top_k: int = 3):
             continue
 
         row = df.iloc[idx]
-
         page_val = row.get("page")
+
         results.append({
             "rank": len(results) + 1,
             "source": row.get("source"),

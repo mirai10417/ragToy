@@ -30,13 +30,8 @@ def normalize_korean_date(text: str) -> str:
 
 def clean_value(text: str) -> str:
     text = normalize_space(text)
-
-    # 다음 번호 항목(예: 2. 대출만기, 3. 상환방식)만 잘라냄
     text = re.split(r"\s+\d+\.\s*", text)[0]
-
-    # 주석 표시는 제거
     text = re.split(r"\s*※", text)[0]
-
     text = normalize_korean_date(text)
     return text.strip(" ,.:;-")
 
@@ -60,23 +55,23 @@ def get_question_keywords(question: str) -> list[str]:
     q = normalize_space(question)
     q = re.sub(r"sample\d+\.pdf", "", q, flags=re.IGNORECASE)
     q = re.sub(r"sample\d+", "", q, flags=re.IGNORECASE)
+    q = re.sub(r"[a-zA-Z0-9_\-]+\.pdf", "", q, flags=re.IGNORECASE)
 
     removable_words = [
         "에서", "의", "를", "을", "은", "는", "이", "가",
         "언제야", "언제", "뭐야", "무엇", "알려줘", "있어",
         "인가", "어디야", "어디", "어느", "몇년이야", "몇년",
-        "얼마야", "얼마", "?", "좀", "혹시"
+        "얼마야", "얼마", "?", "좀", "혹시", "설명해줘", "설명",
+        "쉽게", "간단히", "한줄로", "무슨", "뭔지", "대해", "관련", "내용"
     ]
     for word in removable_words:
         q = q.replace(word, " ")
 
-    parts = [p.strip() for p in q.split() if p.strip()]
-    return parts
+    return [p.strip() for p in q.split() if p.strip()]
 
 
 def guess_label_candidates(question: str) -> list[str]:
     q = normalize_space(question)
-
     candidates = []
 
     suffix_patterns = [
@@ -111,7 +106,6 @@ def guess_label_candidates(question: str) -> list[str]:
         if len(merged) >= 2:
             candidates.append(merged)
 
-    # 자주 나오는 핵심 라벨 직접 추가
     direct_candidates = [
         "대출한도",
         "대출만기",
@@ -232,6 +226,15 @@ def is_amount_question(question: str) -> bool:
     return any(k in q for k in keywords)
 
 
+def is_general_question(question: str) -> bool:
+    q = normalize_space(question)
+    keywords = [
+        "뭐야", "무엇", "설명", "쉽게", "간단히", "한줄로",
+        "차이", "이유", "왜", "어떻게", "개념", "의미"
+    ]
+    return any(k in q for k in keywords)
+
+
 def extract_company_name(text: str) -> str | None:
     raw = normalize_space(text)
 
@@ -279,29 +282,8 @@ def extract_date_candidates(text: str) -> list[str]:
     return results
 
 
-def extract_amount_candidates(text: str) -> list[str]:
-    raw = normalize_space(text)
-
-    patterns = [
-        r"\d[\d,]*\s*억원",
-        r"\d[\d,]*\s*만원",
-        r"\d[\d,]*\s*원",
-        r"\d[\d,]*\.\d+",
-    ]
-
-    values = []
-    for pattern in patterns:
-        for m in re.findall(pattern, raw):
-            cleaned = normalize_space(m)
-            if cleaned not in values:
-                values.append(cleaned)
-
-    return values
-
-
 def extract_title_like_text(text: str) -> str | None:
     raw = normalize_space(text)
-    # 문서 첫 부분에서 제목처럼 보이는 구간
     m = re.match(r"^([가-힣A-Za-z0-9·\(\)\s]+공고)", raw)
     if m:
         return m.group(1).strip()
@@ -333,7 +315,6 @@ def extract_special_answer(question: str, retrieved: list[dict]) -> str | None:
         if is_date_question(question):
             dates = extract_date_candidates(text)
             if dates:
-                # 질문 키워드별 우선 처리
                 if "배당기준일" in question:
                     value = extract_value_by_label(text, "배당기준일")
                     if value:
@@ -364,12 +345,10 @@ def extract_general_answer(question: str, retrieved: list[dict]) -> str:
     if not retrieved:
         return "검색 결과가 없습니다."
 
-    # 0) 질문 의도별 특수 추출 먼저
     special_answer = extract_special_answer(question, retrieved)
     if special_answer:
         return special_answer
 
-    # 1) 목차성 chunk는 뒤로 미루기
     non_toc_retrieved = []
     for r in retrieved:
         text = normalize_space(r["text"])
@@ -381,17 +360,14 @@ def extract_general_answer(question: str, retrieved: list[dict]) -> str:
     working_retrieved = non_toc_retrieved if non_toc_retrieved else retrieved
     top_text = working_retrieved[0]["text"]
 
-    # 2) 질문에서 라벨 후보 추정
     label_candidates = guess_label_candidates(question)
 
-    # 3) 라벨 기반 값 추출
     for r in working_retrieved[:3]:
         for label in label_candidates:
             value = extract_value_by_label(r["text"], label)
             if value:
                 return f"{label}는 {value}입니다."
 
-    # 4) 대출만기 + 거치기간 동시 질문 보강
     q = normalize_space(question)
     if "대출만기" in q and "거치기간" in q:
         for r in working_retrieved[:3]:
@@ -405,39 +381,79 @@ def extract_general_answer(question: str, retrieved: list[dict]) -> str:
                 grace = clean_value(m.group(2))
                 return f"대출만기는 {maturity}이며, 거치기간은 {grace}입니다."
 
-    # 5) 스니펫 반환
     snippet = extract_sentence_like_answer(top_text, question)
     if snippet:
         return snippet
 
-    # 6) 최후 fallback
     return normalize_space(top_text)[:300]
+
+
+def should_use_llm_first(question: str, retrieved: list[dict]) -> bool:
+    if not retrieved:
+        return True
+
+    q = normalize_space(question)
+
+    # 일반 개념/설명 질문은 무조건 LLM 우선
+    if is_general_question(q):
+        return True
+
+    top_score = retrieved[0].get("score", 0)
+    top_text = normalize_space(retrieved[0].get("text", ""))
+    keywords = get_question_keywords(question)
+
+    if top_score < 6:
+        return True
+
+    if keywords:
+        lowered_top_text = top_text.lower()
+        matched = sum(1 for kw in keywords if kw.lower() in lowered_top_text)
+        if matched == 0:
+            return True
+
+    return False
 
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
     retrieved = retrieve(req.question, req.top_k)
     sources = [SourceChunk(**r) for r in retrieved]
+    contexts = [r["text"][:700] for r in retrieved[:3]] if retrieved else []
 
     if not retrieved:
+        try:
+            answer = generate_answer(req.question, [], use_context=False)
+        except Exception as e:
+            print("LLM ERROR:", repr(e))
+            answer = f"LLM 오류: {repr(e)}"
+
         return AskResponse(
             question=req.question,
-            answer="검색 결과가 없습니다.",
+            answer=answer,
             matched_count=0,
             sources=[]
         )
 
-    num_match = re.search(r"\d{4}", req.question)
-    contexts = [r["text"][:700] for r in retrieved[:3]]
-
-    if num_match and not any(k in req.question for k in ["년", "월", "일", "날짜", "일자"]):
-        answer = extract_name_answers(retrieved, num_match.group(0))
+    if should_use_llm_first(req.question, retrieved):
+        try:
+            if is_general_question(req.question):
+                answer = generate_answer(req.question, [], use_context=False)
+            else:
+                answer = generate_answer(req.question, contexts, use_context=True)
+        except Exception as e:
+            print("LLM ERROR:", repr(e))
+            answer = f"LLM 오류: {repr(e)}"
     else:
-        answer = extract_general_answer(req.question, retrieved)
+        num_match = re.search(r"\d{4}", req.question)
+
+        if num_match and not any(k in req.question for k in ["년", "월", "일", "날짜", "일자"]):
+            answer = extract_name_answers(retrieved, num_match.group(0))
+        else:
+            answer = extract_general_answer(req.question, retrieved)
 
         if not answer or answer in ["검색 결과가 없습니다.", ""]:
             try:
-                answer = generate_answer(req.question, contexts)
+                answer = generate_answer(req.question, contexts, use_context=True)
             except Exception as e:
                 print("LLM ERROR:", repr(e))
                 answer = f"LLM 오류: {repr(e)}"

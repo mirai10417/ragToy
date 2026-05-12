@@ -1,31 +1,38 @@
 import numpy as np
-from sklearn.feature_extraction.text import HashingVectorizer
+from sentence_transformers import SentenceTransformer
+from app.config import EMBED_MODEL_NAME
 
-# 고정 차원 벡터 생성기
-# sentence-transformers 대신 가벼운 임시 임베딩 역할
-_vectorizer = HashingVectorizer(
-    n_features=384,
-    alternate_sign=False,
-    norm="l2"
-)
+_model = SentenceTransformer(EMBED_MODEL_NAME)
+
+
+def _format_passage(text: str) -> str:
+    return f"passage: {text}"
+
+
+def _format_query(text: str) -> str:
+    return f"query: {text}"
 
 
 def embed_texts(texts: list[str]) -> np.ndarray:
-    """
-    여러 텍스트를 벡터로 변환
-    return shape: (N, 384), dtype=float32
-    """
     if not texts:
         return np.empty((0, 384), dtype=np.float32)
 
-    matrix = _vectorizer.transform(texts)
-    return matrix.toarray().astype(np.float32)
+    formatted = [_format_passage(t) for t in texts]
+
+    embeddings = _model.encode(
+        formatted,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+        batch_size=8,
+    )
+
+    return embeddings.astype(np.float32)
 
 
 def embed_query(text: str) -> np.ndarray:
-    """
-    단일 질의 텍스트를 벡터로 변환
-    return shape: (1, 384), dtype=float32
-    """
-    matrix = _vectorizer.transform([text])
-    return matrix.toarray().astype(np.float32)
+    embedding = _model.encode(
+        [_format_query(text)],
+        normalize_embeddings=True,
+    )
+
+    return embedding.astype(np.float32)

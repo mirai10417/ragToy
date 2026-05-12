@@ -13,7 +13,9 @@ FAISS_PATH = PROCESSED_DIR / "faiss.index"
 PARQUET_PATH = PROCESSED_DIR / "chunks.parquet"
 SQLITE_PATH = PROCESSED_DIR / "meta.db"
 
-EMBED_MODEL_NAME = "BAAI/bge-m3"
+# EMBED_MODEL_NAME = "intfloat/multilingual-e5-small"
+EMBED_MODEL_NAME = "intfloat/multilingual-e5-base"
+# EMBED_MODEL_NAME = "intfloat/multilingual-e5-large"
 
 LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:11434/v1/chat/completions")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")

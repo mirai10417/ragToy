@@ -1,6 +1,12 @@
 from pathlib import Path
 from pypdf import PdfReader
 import re
+from pdf2image import convert_from_path
+import pytesseract
+from PIL import ImageOps, ImageFilter
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+POPPLER_PATH = r"C:\Users\yhs\Downloads\Release-24.07.0-0\poppler-24.07.0\Library\bin"
 
 
 def looks_like_table(text: str) -> bool:
@@ -8,7 +14,6 @@ def looks_like_table(text: str) -> bool:
     if len(lines) < 5:
         return False
 
-    # 숫자 / 전화번호 / 반복 패턴이 많으면 표로 판단
     score = 0
     for line in lines[:20]:
         if re.search(r"\d{2,}", line):
@@ -21,6 +26,22 @@ def looks_like_table(text: str) -> bool:
     return score >= 8
 
 
+def preprocess_image_for_ocr(img):
+    # 그레이스케일
+    img = ImageOps.grayscale(img)
+
+    # 크기 2배 확대
+    img = img.resize((img.width * 2, img.height * 2))
+
+    # 샤프닝
+    img = img.filter(ImageFilter.SHARPEN)
+
+    # 이진화
+    img = img.point(lambda x: 0 if x < 180 else 255, mode="1")
+
+    return img
+
+
 def parse_pdf(file_path: str):
     reader = PdfReader(file_path)
     texts = []
@@ -29,15 +50,45 @@ def parse_pdf(file_path: str):
         page_text = page.extract_text() or ""
         page_text = page_text.strip()
 
-        if not page_text:
+        if page_text:
+            if looks_like_table(page_text):
+                units = page_text.splitlines()
+            else:
+                units = page_text.split("\n\n")
+
+            for unit in units:
+                unit = unit.strip()
+                if unit:
+                    texts.append({
+                        "source": Path(file_path).name,
+                        "page": page_num,
+                        "text": unit
+                    })
             continue
 
-        # 표형 문서면 줄 단위
-        if looks_like_table(page_text):
-            units = page_text.splitlines()
-        else:
-            # 일반 문서는 문단 단위
-            units = page_text.split("\n\n")
+        images = convert_from_path(
+            file_path,
+            first_page=page_num,
+            last_page=page_num,
+            poppler_path=POPPLER_PATH,
+            dpi=300
+        )
+
+        if not images:
+            continue
+
+        processed = preprocess_image_for_ocr(images[0])
+
+        ocr_text = pytesseract.image_to_string(
+            processed,
+            lang="kor+eng",
+            config="--psm 6"
+        ).strip()
+
+        if not ocr_text:
+            continue
+
+        units = ocr_text.splitlines()
 
         for unit in units:
             unit = unit.strip()
