@@ -15,6 +15,11 @@ SQLITE_PATH = PROCESSED_DIR / "meta.db"
 
 # EMBED_MODEL_NAME = "intfloat/multilingual-e5-small"
 EMBED_MODEL_NAME = "intfloat/multilingual-e5-base"
+#의미기반
+#한국어 지원 좋음
+#영어/한국어 혼합 괜찮음
+#RAG retrieval 용도로 많이 사용
+#query/passsage prefix 공식 지원
 # EMBED_MODEL_NAME = "intfloat/multilingual-e5-large"
 
 LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:11434/v1/chat/completions")

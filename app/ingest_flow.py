@@ -5,7 +5,6 @@ from app.config import RAW_DIR
 from app.db import init_db, get_conn
 from app.parse import parse_pdf
 from app.chunk import semantic_chunk
-from app.embed import embed_texts
 from app.indexer import build_faiss_index, save_chunks_parquet
 
 
@@ -60,6 +59,8 @@ def process_files(files):
 
 @task
 def embed_and_index(rows):
+    from app.embed import embed_texts
+
     texts = [r["text"] for r in rows]
     embeddings = embed_texts(texts)
     build_faiss_index(embeddings)
@@ -71,7 +72,10 @@ def ingest_flow():
     init_db()
     files = list_pdf_files()
     rows = process_files(files)
-    embed_and_index(rows)
+
+    save_chunks_parquet(rows)
+
+    # embed_and_index(rows)
 
 
 if __name__ == "__main__":

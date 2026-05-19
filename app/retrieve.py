@@ -1,25 +1,10 @@
 import re
 import pandas as pd
-from app.indexer import load_chunks_parquet, load_faiss_index
-from app.embed import embed_query
+from app.indexer import load_chunks_parquet
 
 
 def normalize_text(text: str) -> str:
     return re.sub(r"\s+", "", str(text)).lower()
-
-
-def normalize_price_text(text: str) -> str:
-    text = str(text)
-    text = text.replace(",", "")
-    text = re.sub(r"\s+", "", text)
-    return text.lower()
-
-
-def extract_price(question: str) -> str | None:
-    match = re.search(r"(\d[\d,]*)\s*원?", question)
-    if not match:
-        return None
-    return match.group(1).replace(",", "")
 
 
 def extract_source_filter(question: str) -> str | None:
@@ -35,63 +20,159 @@ def extract_source_filter(question: str) -> str | None:
 
 
 def get_question_keywords(question: str) -> list[str]:
-    q = question
+    q = str(question)
 
-    # 파일명 제거
     q = re.sub(r"([a-zA-Z0-9_\-]+\.pdf)", " ", q, flags=re.IGNORECASE)
     q = re.sub(r"(sample\d+)", " ", q, flags=re.IGNORECASE)
 
-    # 불용어 제거
     stopwords = [
         "에서", "의", "를", "을", "은", "는", "이", "가",
-        "얼마야", "뭐야", "무엇", "알려줘", "있어", "짜리", "인가", "이야", "?"
+        "뭐야", "무엇", "알려줘", "있어", "인가", "이야",
+        "언제야", "언제", "어디야", "어디",
+        "누구야", "누구", "?", "좀", "간단히",
+        "설명해줘", "설명", "값", "번호"
     ]
+
     for sw in stopwords:
         q = q.replace(sw, " ")
 
     return [x.strip() for x in q.split() if x.strip()]
 
 
-def compute_keyword_score(text: str, keywords: list[str], target_price: str | None = None) -> int:
-    score = 0
-    norm_text = normalize_text(text)
-    norm_price_text = normalize_price_text(text)
+def is_receipt_order_question(question: str) -> bool:
+    q = normalize_text(question)
+    return any(k in q for k in ["주문번호", "주문", "영수증번호", "거래번호", "승인번호"])
 
-    # 1) 키워드 매칭
-    for kw in keywords:
-        if normalize_text(kw) in norm_text:
-            score += 3
 
-    # 2) 숫자 포함 → 값일 확률 높음
-    if re.search(r"\d+", text):
-        score += 3
+def is_price_question(question: str) -> bool:
+    q = normalize_text(question)
+    return any(k in q for k in ["얼마", "가격", "금액", "단가"])
 
-    # 3) 단위 포함 → 진짜 답일 확률 높음
-    if re.search(r"(년|개월|억원|원|%)", text):
-        score += 2
 
-    # 4) 질문에 가격이 있으면 강하게 반영
-    if target_price and target_price in norm_price_text:
-        score += 10
+def is_total_question(question: str) -> bool:
+    q = normalize_text(question)
+    return any(k in q for k in ["총금액", "합계", "총액", "결제금액"])
 
-    # 5) 너무 짧은 텍스트는 약간 감점
-    # 단, 가격이 일치하는 경우는 감점을 약하게
-    if len(text) < 30:
-        if target_price and target_price in norm_price_text:
-            score -= 1
-        else:
-            score -= 2
 
-    return score
+def get_receipt_full_text(df: pd.DataFrame) -> str:
+    if df.empty:
+        return ""
+
+    df = df.sort_values(by=["page", "chunk_index"], ascending=True)
+    return "\n".join(str(x) for x in df["text"].tolist())
+
+
+def extract_order_number_from_receipt(full_text: str) -> str | None:
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+
+    joined = " ".join(lines)
+
+    # PaddleOCR 결과가 보통 이렇게 분리됨:
+    # 20210220
+    # 01
+    # 00037
+    m = re.search(r"(\d{8})\s+(\d{2})\s+(\d{4,6})", joined)
+    if m:
+        return f"{m.group(1)} {m.group(2)} {m.group(3)}"
+
+    # 붙어서 들어오는 경우
+    m = re.search(r"(\d{8})(\d{2})(\d{4,6})", joined)
+    if m:
+        return f"{m.group(1)} {m.group(2)} {m.group(3)}"
+
+    return None
+
+
+def extract_product_price_from_receipt(full_text: str, product_keyword: str) -> str | None:
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+
+    for i, line in enumerate(lines):
+        if normalize_text(product_keyword) in normalize_text(line):
+            window = lines[i:i + 6]
+            window_text = " ".join(window)
+
+            prices = re.findall(r"\d{1,3}(?:,\d{3})+|\d{4,6}", window_text)
+
+            if prices:
+                return prices[0].replace(",", "")
+
+    return None
+
+
+def extract_total_from_receipt(full_text: str) -> str | None:
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+    joined = " ".join(lines)
+
+    candidates = re.findall(r"\d{1,3}(?:,\d{3})+|\d{4,6}", joined)
+
+    if not candidates:
+        return None
+
+    nums = []
+    for c in candidates:
+        try:
+            nums.append(int(c.replace(",", "").replace(" ", "")))
+        except Exception:
+            pass
+
+    if not nums:
+        return None
+
+    return str(max(nums))
+
+
+def make_receipt_answer(question: str, source: str, df: pd.DataFrame) -> dict | None:
+    full_text = get_receipt_full_text(df)
+
+    if not full_text:
+        return None
+
+    if is_receipt_order_question(question):
+        order_no = extract_order_number_from_receipt(full_text)
+
+        if order_no:
+            return {
+                "source": source,
+                "page": 1,
+                "text": f"주문번호는 {order_no}입니다.",
+                "score": 100.0
+            }
+
+    if is_total_question(question):
+        total = extract_total_from_receipt(full_text)
+
+        if total:
+            return {
+                "source": source,
+                "page": 1,
+                "text": f"총금액은 {total}원입니다.",
+                "score": 90.0
+            }
+
+    if is_price_question(question):
+        keywords = get_question_keywords(question)
+
+        for kw in keywords:
+            price = extract_product_price_from_receipt(full_text, kw)
+
+            if price:
+                return {
+                    "source": source,
+                    "page": 1,
+                    "text": f"{kw} 금액은 {price}원입니다.",
+                    "score": 80.0
+                }
+
+    return None
 
 
 def retrieve(question: str, top_k: int = 3):
     df = load_chunks_parquet()
+
     if df.empty:
         return []
 
     source_filter = extract_source_filter(question)
-    target_price = extract_price(question)
 
     working_df = df.copy()
 
@@ -99,69 +180,76 @@ def retrieve(question: str, top_k: int = 3):
         filtered = working_df[
             working_df["source"].fillna("").str.lower() == source_filter.lower()
         ].copy()
+
         if not filtered.empty:
             working_df = filtered
 
+    if working_df.empty:
+        return []
+
+    # receipt.pdf 같은 OCR 영수증은 행 단위가 너무 잘게 쪼개져 있으므로 전체 문맥으로 처리
+    if source_filter and "receipt" in source_filter.lower():
+        receipt_answer = make_receipt_answer(question, source_filter, working_df)
+
+        if receipt_answer:
+            return [{
+                "rank": 1,
+                "source": receipt_answer["source"],
+                "page": receipt_answer["page"],
+                "text": receipt_answer["text"],
+                "score": receipt_answer["score"],
+            }]
+
     keywords = get_question_keywords(question)
 
-    working_df["score"] = working_df["text"].apply(
-        lambda t: compute_keyword_score(t, keywords, target_price)
-    )
-
-    keyword_hits = working_df[working_df["score"] > 0].copy()
-
-    sort_columns = ["score"]
-    ascending_values = [False]
-
-    if "page" in keyword_hits.columns:
-        sort_columns.append("page")
-        ascending_values.append(True)
-
-    if "chunk_index" in keyword_hits.columns:
-        sort_columns.append("chunk_index")
-        ascending_values.append(True)
-
-    if not keyword_hits.empty:
-        keyword_hits = keyword_hits.sort_values(
-            by=sort_columns,
-            ascending=ascending_values
-        )
-
-        results = []
-        for rank, (_, row) in enumerate(keyword_hits.head(top_k).iterrows(), start=1):
-            page_val = row.get("page")
-            results.append({
-                "rank": rank,
-                "source": row.get("source"),
-                "page": int(page_val) if pd.notna(page_val) else None,
-                "text": row["text"],
-                "score": float(row["score"]),
-            })
-        return results
-
-    # fallback: FAISS
-    query_vec = embed_query(question).astype("float32")
-    index = load_faiss_index()
-    search_k = min(max(top_k * 5, 20), len(df))
-    scores, indices = index.search(query_vec, search_k)
-
     results = []
-    for score, idx in zip(scores[0], indices[0]):
-        if idx < 0:
+
+    for _, row in working_df.iterrows():
+        text = str(row.get("text", ""))
+        norm_text = normalize_text(text)
+
+        score = 0.0
+
+        for kw in keywords:
+            if normalize_text(kw) in norm_text:
+                score += 10.0
+
+        # 숫자 질문일 가능성이 있으면 숫자가 있는 행 가산
+        if re.search(r"\d+", question) and re.search(r"\d+", text):
+            score += 3.0
+
+        if score <= 0:
             continue
 
-        row = df.iloc[idx]
         page_val = row.get("page")
 
         results.append({
-            "rank": len(results) + 1,
+            "rank": 0,
             "source": row.get("source"),
             "page": int(page_val) if pd.notna(page_val) else None,
-            "text": row["text"],
-            "score": float(score),
+            "text": text,
+            "score": score,
         })
 
-        if len(results) >= top_k:
+    results = sorted(results, key=lambda x: x["score"], reverse=True)
+
+    if not results:
+        return []
+
+    final_results = []
+    seen = set()
+
+    for item in results:
+        key = (item["source"], item["page"], item["text"])
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        item["rank"] = len(final_results) + 1
+        final_results.append(item)
+
+        if len(final_results) >= top_k:
             break
 
-    return results
+    return final_results
