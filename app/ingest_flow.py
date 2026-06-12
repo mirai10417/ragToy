@@ -1,5 +1,12 @@
 from pathlib import Path
 import uuid
+
+# PaddlePaddle(OCR)가 DLL 환경을 변경하기 전에 torch를 메인 스레드에서 미리 로드.
+# Prefect 태스크는 스레드에서 실행되는데, 스레드 안에서 첫 import torch 시
+# [WinError 127] shm.dll 오류가 발생함. 미리 import해두면 sys.modules에
+# 캐시되어 스레드에서도 재로드 없이 사용 가능.
+import torch  # noqa: F401
+
 from prefect import flow, task
 from app.config import RAW_DIR
 from app.db import init_db, get_conn
@@ -59,12 +66,17 @@ def process_files(files):
 
 @task
 def embed_and_index(rows):
-    from app.embed import embed_texts
-
-    texts = [r["text"] for r in rows]
-    embeddings = embed_texts(texts)
-    build_faiss_index(embeddings)
+    # parquet은 항상 저장 (키워드 검색 fallback 보장)
     save_chunks_parquet(rows)
+
+    try:
+        from app.embed import embed_texts
+        texts = [r["text"] for r in rows]
+        embeddings = embed_texts(texts)
+        build_faiss_index(embeddings)
+        print(f"벡터 인덱스 빌드 완료: {len(rows)}개 청크")
+    except Exception as e:
+        print(f"[경고] 벡터 인덱스 빌드 실패 (키워드 검색으로 동작): {e}")
 
 
 @flow(name="ingest-documents")
@@ -73,9 +85,7 @@ def ingest_flow():
     files = list_pdf_files()
     rows = process_files(files)
 
-    save_chunks_parquet(rows)
-
-    # embed_and_index(rows)
+    embed_and_index(rows)
 
 
 if __name__ == "__main__":

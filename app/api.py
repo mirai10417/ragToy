@@ -249,7 +249,22 @@ def ask(req: AskRequest):
     retrieved = retrieve(req.question, req.top_k)
     sources = [SourceChunk(**r) for r in retrieved]
 
-    answer = make_answer(req.question, retrieved)
+    if not retrieved:
+        return AskResponse(
+            question=req.question,
+            answer="문서에서 관련 내용을 찾지 못했습니다.",
+            matched_count=0,
+            sources=[]
+        )
+
+    # LLM으로 답변 생성 (우선)
+    try:
+        from app.llm import generate_answer
+        contexts = [r["text"] for r in retrieved[:3]]
+        answer = generate_answer(req.question, contexts)
+    except Exception as e:
+        print(f"LLM 호출 실패, 패턴 기반 추출로 대체: {e}")
+        answer = make_answer(req.question, retrieved)
 
     return AskResponse(
         question=req.question,

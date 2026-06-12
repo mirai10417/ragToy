@@ -166,42 +166,8 @@ def make_receipt_answer(question: str, source: str, df: pd.DataFrame) -> dict | 
     return None
 
 
-def retrieve(question: str, top_k: int = 3):
-    df = load_chunks_parquet()
-
-    if df.empty:
-        return []
-
-    source_filter = extract_source_filter(question)
-
-    working_df = df.copy()
-
-    if source_filter:
-        filtered = working_df[
-            working_df["source"].fillna("").str.lower() == source_filter.lower()
-        ].copy()
-
-        if not filtered.empty:
-            working_df = filtered
-
-    if working_df.empty:
-        return []
-
-    # receipt.pdf 같은 OCR 영수증은 행 단위가 너무 잘게 쪼개져 있으므로 전체 문맥으로 처리
-    if source_filter and "receipt" in source_filter.lower():
-        receipt_answer = make_receipt_answer(question, source_filter, working_df)
-
-        if receipt_answer:
-            return [{
-                "rank": 1,
-                "source": receipt_answer["source"],
-                "page": receipt_answer["page"],
-                "text": receipt_answer["text"],
-                "score": receipt_answer["score"],
-            }]
-
+def _keyword_search(working_df: pd.DataFrame, question: str, top_k: int) -> list[dict]:
     keywords = get_question_keywords(question)
-
     results = []
 
     for _, row in working_df.iterrows():
@@ -209,12 +175,10 @@ def retrieve(question: str, top_k: int = 3):
         norm_text = normalize_text(text)
 
         score = 0.0
-
         for kw in keywords:
             if normalize_text(kw) in norm_text:
                 score += 10.0
 
-        # 숫자 질문일 가능성이 있으면 숫자가 있는 행 가산
         if re.search(r"\d+", question) and re.search(r"\d+", text):
             score += 3.0
 
@@ -222,7 +186,6 @@ def retrieve(question: str, top_k: int = 3):
             continue
 
         page_val = row.get("page")
-
         results.append({
             "rank": 0,
             "source": row.get("source"),
@@ -233,23 +196,93 @@ def retrieve(question: str, top_k: int = 3):
 
     results = sorted(results, key=lambda x: x["score"], reverse=True)
 
-    if not results:
-        return []
-
     final_results = []
     seen = set()
-
     for item in results:
         key = (item["source"], item["page"], item["text"])
-
         if key in seen:
             continue
-
         seen.add(key)
         item["rank"] = len(final_results) + 1
         final_results.append(item)
-
         if len(final_results) >= top_k:
             break
 
     return final_results
+
+
+def retrieve(question: str, top_k: int = 3):
+    df = load_chunks_parquet()
+
+    if df.empty:
+        return []
+
+    source_filter = extract_source_filter(question)
+
+    # 영수증은 전용 추출 로직 우선 적용
+    if source_filter and "receipt" in source_filter.lower():
+        receipt_df = df[df["source"].fillna("").str.lower() == source_filter.lower()].copy()
+        if not receipt_df.empty:
+            receipt_answer = make_receipt_answer(question, source_filter, receipt_df)
+            if receipt_answer:
+                return [{
+                    "rank": 1,
+                    "source": receipt_answer["source"],
+                    "page": receipt_answer["page"],
+                    "text": receipt_answer["text"],
+                    "score": receipt_answer["score"],
+                }]
+
+    # FAISS 의미 검색 (primary)
+    try:
+        from app.config import FAISS_PATH
+        if FAISS_PATH.exists():
+            from app.indexer import load_faiss_index
+            from app.embed import embed_query
+
+            index = load_faiss_index()
+            q_vec = embed_query(question)
+
+            # source_filter 있을 때는 더 많이 검색 후 필터링
+            search_k = len(df) if source_filter else min(top_k * 5, len(df))
+            scores, indices = index.search(q_vec, search_k)
+
+            results = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx < 0 or idx >= len(df):
+                    continue
+                row = df.iloc[idx]
+                row_source = str(row.get("source", ""))
+                if source_filter and row_source.lower() != source_filter.lower():
+                    continue
+                page_val = row.get("page")
+                results.append({
+                    "rank": 0,
+                    "source": row_source,
+                    "page": int(page_val) if pd.notna(page_val) else None,
+                    "text": str(row.get("text", "")),
+                    "score": float(score),
+                })
+                if len(results) >= top_k:
+                    break
+
+            if results:
+                for i, r in enumerate(results):
+                    r["rank"] = i + 1
+                return results
+    except Exception as e:
+        print(f"FAISS 검색 실패, 키워드 검색으로 대체: {e}")
+
+    # 키워드 검색 fallback
+    working_df = df.copy()
+    if source_filter:
+        filtered = working_df[
+            working_df["source"].fillna("").str.lower() == source_filter.lower()
+        ].copy()
+        if not filtered.empty:
+            working_df = filtered
+
+    if working_df.empty:
+        return []
+
+    return _keyword_search(working_df, question, top_k)

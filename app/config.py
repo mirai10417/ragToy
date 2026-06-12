@@ -9,7 +9,7 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 
-FAISS_PATH = PROCESSED_DIR / "faiss.index"
+FAISS_PATH = PROCESSED_DIR / "faiss.npy"
 PARQUET_PATH = PROCESSED_DIR / "chunks.parquet"
 SQLITE_PATH = PROCESSED_DIR / "meta.db"
 

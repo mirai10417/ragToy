@@ -14,10 +14,15 @@ __pycache__/
 .vscode/
 .idea/
 
-# RAG generated data
-data/faiss.index
-data/chunks.parquet
-data/rag.db
+# RAG generated data (재생성 가능한 파일)
+data/processed/faiss.index
+data/processed/faiss.npy
+data/processed/chunks.parquet
+data/processed/meta.db
+data/processed/*.png
+
+# 테스트 임시 결과
+test_result.txt
 
 # OS
 .DS_Store
