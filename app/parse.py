@@ -13,6 +13,33 @@ ocr = PaddleOCR(
 )
 
 
+def is_toc_text(text: str) -> bool:
+    """목차(Table of Contents) 페이지 여부를 판단한다."""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return False
+
+    # 명시적 목차 헤더가 있으면 즉시 True
+    toc_headers = re.compile(r"^(목\s*차|차\s*례|contents|table\s+of\s+contents)$", re.IGNORECASE)
+    if any(toc_headers.match(l) for l in lines):
+        return True
+
+    if len(lines) < 4:
+        return False
+
+    # 점선 뒤 숫자 패턴: "제목 ···· 15" 처럼 점선과 숫자가 같은 줄에 있어야 목차 줄로 판단
+    # 단순히 줄 끝 숫자(등수, 수량 등)는 제외
+    toc_line_count = sum(
+        1 for l in lines
+        if re.search(r"[·.]{3,}.*\d+\s*$|[-─]{4,}.*\d+\s*$", l)
+    )
+
+    toc_ratio = toc_line_count / len(lines)
+
+    # 목차형 줄이 25% 이상이면 목차 페이지로 판단
+    return toc_ratio >= 0.25
+
+
 def normalize_ocr_text(text: str) -> str:
     text = str(text)
     text = text.replace("|", " ")
@@ -108,6 +135,9 @@ def parse_pdf(file_path: str):
             text = normalize_ocr_text(text).strip()
             if len(text) < 2:
                 continue
+            if is_toc_text(text):
+                print(f"[parse] 목차 페이지 건너뜀: {filename} p.{page_num}")
+                continue
             texts.append({
                 "source": filename,
                 "page": page_num,
@@ -161,6 +191,9 @@ def parse_pdf(file_path: str):
                 })
         else:
             # 일반 스캔 문서: 페이지 전체를 하나의 청크로 (청커가 분할)
+            if is_toc_text(ocr_text):
+                print(f"[parse] 목차 페이지 건너뜀: {filename} p.{page_num}")
+                continue
             texts.append({
                 "source": filename,
                 "page": page_num,

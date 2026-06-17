@@ -8,7 +8,7 @@ import uuid
 import torch  # noqa: F401
 
 from prefect import flow, task
-from app.config import RAW_DIR
+from app.config import RAW_DIR, CHUNK_SIZE, CHUNK_OVERLAP
 from app.db import init_db, get_conn
 from app.parse import parse_pdf
 from app.chunk import semantic_chunk
@@ -35,7 +35,7 @@ def process_files(files):
         )
 
         elements = parse_pdf(str(file_path))
-        chunks = semantic_chunk(elements)
+        chunks = semantic_chunk(elements, max_length=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
 
         for i, chunk in enumerate(chunks):
             chunk_id = str(uuid.uuid4())

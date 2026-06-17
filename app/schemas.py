@@ -4,7 +4,7 @@ from typing import List, Optional
 
 class AskRequest(BaseModel):
     question: str
-    top_k: int = 4
+    top_k: int = 3
 
 
 class SourceChunk(BaseModel):
