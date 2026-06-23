@@ -27,7 +27,29 @@ Python 3.11.9
 docker exec -it ollama ollama pull llama3.2:1b
 docker run -d --name ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 
+## 문서별 청크 수 확인하기
+python -c "
+import pandas as pd
+df = pd.read_parquet('E:/ragToy/data/processed/chunks.parquet')
+print(df['filename'].value_counts())
+"
 
+## 문서별 청크 수 + 내용 확인하기
+python -c "
+import pandas as pd
+pd.set_option('display.max_colwidth', 100)
+df = pd.read_parquet('E:/ragToy/data/processed/chunks.parquet')
+print(df[df['filename'] == 'sample1.pdf'][['page', 'chunk_index', 'text']].head(20).to_string())
+"
+
+## 문서별 청크 수 + 텍스트 길이
+python -c "
+import pandas as pd
+df = pd.read_parquet('E:/ragToy/data/processed/chunks.parquet')
+s3 = df[df['filename'] == 'sample3.pdf']
+print('청크 수:', len(s3))
+print('텍스트 길이:', s3['text'].str.len().values)
+"
 
 현재 scikit-learn 사용중인데 torch가 좋음
 

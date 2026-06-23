@@ -27,3 +27,15 @@ test_result.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# 발표 자료 및 임시 pptx
+*.pptx
+unpacked_pptx/
+
+# 임시 스크립트 (밑줄로 시작)
+_*.py
+_*.md
+
+# 샘플 이미지 및 테스트용 pdf
+sampleimage/
+receipt.pdf

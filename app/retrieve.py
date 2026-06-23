@@ -312,19 +312,19 @@ def retrieve(question: str, top_k: int = 3):
 
     source_filter = extract_source_filter(question)
 
-    # 영수증은 전용 추출 로직 우선 적용
+    # 영수증: 전체 OCR 텍스트를 하나로 합쳐 LLM이 직접 판단
     if source_filter and "receipt" in source_filter.lower():
         receipt_df = df[df["source"].fillna("").str.lower() == source_filter.lower()].copy()
         if not receipt_df.empty:
-            receipt_answer = make_receipt_answer(question, source_filter, receipt_df)
-            if receipt_answer:
-                return [{
-                    "rank": 1,
-                    "source": receipt_answer["source"],
-                    "page": receipt_answer["page"],
-                    "text": receipt_answer["text"],
-                    "score": receipt_answer["score"],
-                }]
+            receipt_df = receipt_df.sort_values(by=["page", "chunk_index"], ascending=True)
+            full_text = "\n".join(str(x) for x in receipt_df["text"].tolist())
+            return [{
+                "rank": 1,
+                "source": source_filter,
+                "page": 1,
+                "text": full_text,
+                "score": 100.0,
+            }]
 
     # ── Hybrid Retrieval (FAISS + Keyword, RRF 합산) ──────────────────
     try:

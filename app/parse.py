@@ -96,31 +96,59 @@ def run_paddle_ocr(image_path: str):
     print(result)
     print("===========================================")
 
-    lines = []
-
     if not result:
         return ""
 
+    # 좌표 기반 레이아웃 복원: Y좌표로 행 묶기, X좌표로 열 정렬
+    tokens = []  # (y_center, x_center, text)
     for page_result in result:
         if not page_result:
             continue
-
         for item in page_result:
             try:
+                box = item[0]   # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
                 text = item[1][0]
                 score = item[1][1]
             except Exception:
                 continue
-
             if score < 0.3:
                 continue
-
             text = normalize_ocr_text(text)
+            if len(text) < 1:
+                continue
+            ys = [pt[1] for pt in box]
+            xs = [pt[0] for pt in box]
+            y_center = sum(ys) / len(ys)
+            x_center = sum(xs) / len(xs)
+            tokens.append((y_center, x_center, text))
 
-            if len(text) >= 2:
-                lines.append(text)
+    if not tokens:
+        return ""
 
-    return "\n".join(lines)
+    # Y좌표 기준 정렬 후 같은 행(y 차이 20px 이내)끼리 묶기
+    tokens.sort(key=lambda t: t[0])
+    row_threshold = 20
+    rows: list[list[tuple]] = []
+    current_row: list[tuple] = [tokens[0]]
+
+    for tok in tokens[1:]:
+        if abs(tok[0] - current_row[-1][0]) <= row_threshold:
+            current_row.append(tok)
+        else:
+            rows.append(current_row)
+            current_row = [tok]
+    rows.append(current_row)
+
+    # 각 행 내부를 X좌표 순으로 정렬 후 공백으로 연결
+    lines = []
+    for row in rows:
+        row.sort(key=lambda t: t[1])
+        lines.append("  ".join(t[2] for t in row))
+
+    raw = "\n".join(lines)
+    # "20 000" → "20000" 형태로 분리된 숫자 합치기
+    raw = re.sub(r"(\d+)\s{1,2}(\d{3})(?=\D|$)", r"\1\2", raw)
+    return raw
 
 
 def parse_pdf(file_path: str):
