@@ -118,12 +118,16 @@ def get_question_keywords(question: str) -> list[str]:
     q = re.sub(r"([a-zA-Z0-9_\-]+\.pdf)", " ", q, flags=re.IGNORECASE)
     q = re.sub(r"(sample\d+)", " ", q, flags=re.IGNORECASE)
 
+    # 괄호·특수문자를 공백으로 분리해서 "모기지신용보증(MCG)에" → "모기지신용보증 MCG 에"
+    q = re.sub(r"[()（）「」『』【】\[\]{}<>]", " ", q)
+
     stopwords = [
-        "에서", "의", "를", "을", "은", "는", "이", "가",
+        "에서", "에게", "에서는", "에는", "에도", "에대해", "에대한",
+        "의", "를", "을", "은", "는", "이", "가", "에", "과", "와",
         "뭐야", "무엇", "알려줘", "있어", "인가", "이야",
         "언제야", "언제", "어디야", "어디",
         "누구야", "누구", "?", "좀", "간단히",
-        "설명해줘", "설명", "값", "번호"
+        "설명해줘", "설명", "대해", "대한", "관해", "값", "번호"
     ]
 
     for sw in stopwords:
@@ -369,16 +373,17 @@ def retrieve(question: str, top_k: int = 3):
             kw_scores.sort(key=lambda x: x[1], reverse=True)
             sparse_ranks: dict[int, int] = {df_idx: r + 1 for r, (df_idx, _) in enumerate(kw_scores)}
 
-            # ③ RRF 합산: score = 1/(k+rank_dense) + 1/(k+rank_sparse), k=60
-            K = 60
+            # ③ RRF 합산: Dense는 K=60, Sparse는 K=20 (키워드 매칭 우선)
+            K_DENSE = 60
+            K_SPARSE = 20
             all_idx = set(dense_ranks) | set(sparse_ranks)
             rrf: list[tuple[float, int]] = []
             for df_idx in all_idx:
                 s = 0.0
                 if df_idx in dense_ranks:
-                    s += 1.0 / (K + dense_ranks[df_idx])
+                    s += 1.0 / (K_DENSE + dense_ranks[df_idx])
                 if df_idx in sparse_ranks:
-                    s += 1.0 / (K + sparse_ranks[df_idx])
+                    s += 1.0 / (K_SPARSE + sparse_ranks[df_idx])
                 rrf.append((s, df_idx))
             rrf.sort(reverse=True)
 

@@ -6,6 +6,7 @@ import sys
 import json
 import urllib.request
 
+sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, ".")
 
 # ── 평가용 질문 + 정답(ground truth) ──────────────────────────────────────
