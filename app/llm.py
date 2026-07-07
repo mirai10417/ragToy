@@ -1,4 +1,5 @@
 import re
+import json
 import requests
 
 
@@ -61,7 +62,7 @@ Answer the user's question clearly and naturally in Korean.
 Do not mention the provided context unless it is actually relevant."""
 
 
-def generate_answer(question: str, contexts: list[str] | None = None, use_context: bool = True) -> str:
+def _build_messages(question: str, contexts: list[str] | None, use_context: bool):
     contexts = contexts or []
 
     if use_context and contexts:
@@ -77,23 +78,56 @@ def generate_answer(question: str, contexts: list[str] | None = None, use_contex
         system_prompt = GENERAL_SYSTEM_PROMPT
         user_content = question
 
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _headers():
+    headers = {"Content-Type": "application/json"}
+    if LLM_API_KEY and LLM_API_KEY != "dummy":
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+    return headers
+
+
+def generate_answer_stream(question: str, contexts: list[str] | None = None, use_context: bool = True):
+    """토큰을 생성되는 대로 하나씩 yield하는 스트리밍 제너레이터."""
     payload = {
         "model": LLM_MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ],
+        "messages": _build_messages(question, contexts, use_context),
+        "temperature": 0.1,
+        "stream": True,
+    }
+
+    with requests.post(LLM_API_URL, json=payload, headers=_headers(), timeout=180, stream=True) as resp:
+        resp.raise_for_status()
+        resp.encoding = "utf-8"  # charset 미지정 시 latin-1로 디코딩돼 한글이 깨지는 것 방지
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            if line.startswith("data: "):
+                line = line[len("data: "):]
+            if line.strip() == "[DONE]":
+                break
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            delta = data.get("choices", [{}])[0].get("delta", {})
+            token = delta.get("content")
+            if token:
+                yield token
+
+
+def generate_answer(question: str, contexts: list[str] | None = None, use_context: bool = True) -> str:
+    payload = {
+        "model": LLM_MODEL_NAME,
+        "messages": _build_messages(question, contexts, use_context),
         "temperature": 0.1
     }
 
-    headers = {
-        "Content-Type": "application/json",
-    }
-
-    if LLM_API_KEY and LLM_API_KEY != "dummy":
-        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
-
-    resp = requests.post(LLM_API_URL, json=payload, headers=headers, timeout=180)
+    resp = requests.post(LLM_API_URL, json=payload, headers=_headers(), timeout=180)
     resp.raise_for_status()
 
     data = resp.json()

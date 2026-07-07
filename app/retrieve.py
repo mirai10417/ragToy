@@ -373,9 +373,18 @@ def retrieve(question: str, top_k: int = 3):
             kw_scores.sort(key=lambda x: x[1], reverse=True)
             sparse_ranks: dict[int, int] = {df_idx: r + 1 for r, (df_idx, _) in enumerate(kw_scores)}
 
+            # 질문 핵심 키워드(확장 제외) — 커버리지 가산점 계산용
+            # RRF는 순위만 보고 "몇 개의 질문 키워드를 포함했는가"를 무시하므로,
+            # 여러 키워드를 동시에 포함한 chunk에 가산해 질문 의도 커버리지를 반영한다.
+            # (정보검색의 coordination-level matching — 파일·도메인 무관 범용 규칙)
+            core_keywords = [normalize_text(k) for k in get_question_keywords(question)]
+            core_keywords = [k for k in core_keywords if k]
+            n_core = len(core_keywords)
+
             # ③ RRF 합산: Dense는 K=60, Sparse는 K=20 (키워드 매칭 우선)
             K_DENSE = 60
             K_SPARSE = 20
+            COVERAGE_WEIGHT = 0.05  # RRF 최상위 점수(~0.06)와 비슷한 규모
             all_idx = set(dense_ranks) | set(sparse_ranks)
             rrf: list[tuple[float, int]] = []
             for df_idx in all_idx:
@@ -384,6 +393,13 @@ def retrieve(question: str, top_k: int = 3):
                     s += 1.0 / (K_DENSE + dense_ranks[df_idx])
                 if df_idx in sparse_ranks:
                     s += 1.0 / (K_SPARSE + sparse_ranks[df_idx])
+                # 질문 키워드를 2개 이상 포함한 chunk에만 커버리지 비례 가산
+                # (단일 키워드 질문은 covered<2로 가산 없음 → 기존 동작 보존)
+                if n_core >= 2:
+                    norm = normalize_text(str(df.iloc[df_idx].get("text", "")))
+                    covered = sum(1 for k in core_keywords if k in norm)
+                    if covered >= 2:
+                        s += COVERAGE_WEIGHT * (covered / n_core)
                 rrf.append((s, df_idx))
             rrf.sort(reverse=True)
 

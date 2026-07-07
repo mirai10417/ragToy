@@ -19,7 +19,11 @@ data/processed/faiss.index
 data/processed/faiss.npy
 data/processed/chunks.parquet
 data/processed/meta.db
+data/processed/file_hashes.json
 data/processed/*.png
+
+# 원본 문서 (기밀·저작권·용량 — repo에 포함하지 않음. 각자 넣어 재생성)
+data/raw/*.pdf
 
 # 테스트 임시 결과
 test_result.txt

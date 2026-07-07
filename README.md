@@ -30,6 +30,9 @@ docker run -d --name ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 ## 7. streamlit UI 실행
 streamlit run ui.py
 
+## 문서 자동 인덱싱 서버
+python -m app.watcher
+
 ## 문서별 청크 수 확인하기
 python -c "
 import pandas as pd

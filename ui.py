@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import json
 import time
 
 API_URL = "http://localhost:8000"
@@ -40,7 +41,7 @@ def render_sources(sources: list, msg_idx: int = 0):
 # --- 사이드바 ---
 with st.sidebar:
     st.header("⚙️ 설정")
-    top_k = st.slider("검색 청크 수 (top-k)", min_value=1, max_value=10, value=3)
+    top_k = st.slider("검색 청크 수 (top-k)", min_value=1, max_value=10, value=5)
 
     st.divider()
 
@@ -89,51 +90,59 @@ if question:
         st.markdown(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("문서를 검색하고 답변을 생성 중..."):
-            start = time.time()
-            try:
-                resp = requests.post(
-                    f"{API_URL}/ask",
-                    json={"question": question, "top_k": top_k},
-                    timeout=180,
-                )
-                elapsed = time.time() - start
+        start = time.time()
+        holder = {"sources": [], "matched": 0}
+        status = st.empty()
+        status.markdown("🔍 **문서 검색 중...**")
 
-                if resp.ok:
-                    data = resp.json()
-                    answer = data.get("answer", "답변을 생성하지 못했습니다.")
-                    sources = data.get("sources", [])
-                    matched = data.get("matched_count", 0)
+        def token_generator():
+            with requests.post(
+                f"{API_URL}/ask/stream",
+                json={"question": question, "top_k": top_k},
+                stream=True,
+                timeout=180,
+            ) as resp:
+                resp.raise_for_status()
+                resp.encoding = "utf-8"
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    if obj.get("type") == "sources":
+                        holder["sources"] = obj.get("sources", [])
+                        holder["matched"] = obj.get("matched_count", 0)
+                        # 검색 끝 → 생성 단계로 배지 전환
+                        status.markdown("✍️ **답변 작성 중...**")
+                    elif obj.get("type") == "token":
+                        yield obj.get("text", "")
 
-                    st.markdown(answer)
-                    render_sources(sources, msg_idx=len(st.session_state["history"]))
-                    st.caption(f"⏱ {elapsed:.1f}초 · 검색된 청크 {matched}개")
+        try:
+            answer = st.write_stream(token_generator())
+            status.empty()  # 완료 시 상태 배지 제거
 
-                    st.session_state["history"].append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources,
-                        "elapsed": elapsed,
-                        "matched": matched,
-                    })
-                else:
-                    err = f"서버 오류 ({resp.status_code}): {resp.text}"
-                    st.error(err)
-                    st.session_state["history"].append({
-                        "role": "assistant", "content": err, "sources": []
-                    })
+            elapsed = time.time() - start
+            render_sources(holder["sources"], msg_idx=len(st.session_state["history"]))
+            st.caption(f"⏱ {elapsed:.1f}초 · 검색된 청크 {holder['matched']}개")
 
-            except requests.exceptions.ConnectionError:
-                err = "❌ FastAPI 서버에 연결할 수 없습니다. `uvicorn app.api:app --reload` 를 먼저 실행하세요."
-                st.error(err)
-                st.session_state["history"].append({
-                    "role": "assistant", "content": err, "sources": []
-                })
-            except Exception as e:
-                err = f"예기치 않은 오류: {e}"
-                st.error(err)
-                st.session_state["history"].append({
-                    "role": "assistant", "content": err, "sources": []
-                })
+            st.session_state["history"].append({
+                "role": "assistant",
+                "content": answer,
+                "sources": holder["sources"],
+                "elapsed": elapsed,
+                "matched": holder["matched"],
+            })
+
+        except requests.exceptions.ConnectionError:
+            err = "❌ FastAPI 서버에 연결할 수 없습니다. `uvicorn app.api:app --reload` 를 먼저 실행하세요."
+            st.error(err)
+            st.session_state["history"].append({
+                "role": "assistant", "content": err, "sources": []
+            })
+        except Exception as e:
+            err = f"예기치 않은 오류: {e}"
+            st.error(err)
+            st.session_state["history"].append({
+                "role": "assistant", "content": err, "sources": []
+            })
 
     st.rerun()

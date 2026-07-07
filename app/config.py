@@ -26,6 +26,8 @@ LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:11434/v1/chat/completio
 LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama3.2:3b")
 
-TOP_K = int(os.getenv("TOP_K", "3"))
+TOP_K = int(os.getenv("TOP_K", "5"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
+
+HASH_STORE_PATH = PROCESSED_DIR / "file_hashes.json"

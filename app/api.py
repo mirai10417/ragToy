@@ -1,9 +1,22 @@
 import re
+import json
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from app.schemas import AskRequest, AskResponse, SourceChunk
 from app.retrieve import retrieve
 
 app = FastAPI(title="RAG Toy MVP")
+
+
+@app.on_event("startup")
+def _warmup():
+    # 서버 시작(또는 reload) 시 임베딩 모델을 미리 로딩해 첫 질문의 콜드 스타트 지연 제거
+    try:
+        from app.embed import embed_query
+        embed_query("워밍업")
+        print("[startup] 임베딩 모델 워밍업 완료")
+    except Exception as e:
+        print(f"[startup] 워밍업 실패(무시): {e}")
 
 
 @app.get("/health")
@@ -272,3 +285,38 @@ def ask(req: AskRequest):
         matched_count=len(sources),
         sources=sources
     )
+
+
+@app.post("/ask/stream")
+def ask_stream(req: AskRequest):
+    """NDJSON 스트림: 첫 줄은 sources 메타데이터, 이후 줄은 토큰."""
+    retrieved = retrieve(req.question, req.top_k)
+
+    def event_stream():
+        # ① 근거 문서 메타데이터 먼저 전송
+        header = {
+            "type": "sources",
+            "matched_count": len(retrieved),
+            "sources": retrieved,
+        }
+        yield json.dumps(header, ensure_ascii=False) + "\n"
+
+        if not retrieved:
+            yield json.dumps(
+                {"type": "token", "text": "문서에서 관련 내용을 찾지 못했습니다."},
+                ensure_ascii=False,
+            ) + "\n"
+            return
+
+        # ② LLM 토큰 스트리밍 (실패 시 패턴 기반 추출로 대체)
+        contexts = [r["text"] for r in retrieved[:3]]
+        try:
+            from app.llm import generate_answer_stream
+            for token in generate_answer_stream(req.question, contexts):
+                yield json.dumps({"type": "token", "text": token}, ensure_ascii=False) + "\n"
+        except Exception as e:
+            print(f"LLM 스트리밍 실패, 패턴 기반 추출로 대체: {e}")
+            fallback = make_answer(req.question, retrieved)
+            yield json.dumps({"type": "token", "text": fallback}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
