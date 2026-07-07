@@ -26,7 +26,7 @@ def render_sources(sources: list, msg_idx: int = 0):
             text = src.get("text", "")
 
             page_str = f" · p.{page}" if page else ""
-            st.markdown(f"**[{rank}위]** `{source}`{page_str} — RRF 점수 `{score:.4f}` / max `0.0328`")
+            st.markdown(f"**[{rank}위]** `{source}`{page_str} — RRF 점수 `{score:.4f}` / max `0.0640`")
             st.text_area(
                 label="",
                 value=text,
@@ -95,7 +95,7 @@ if question:
                 resp = requests.post(
                     f"{API_URL}/ask",
                     json={"question": question, "top_k": top_k},
-                    timeout=60,
+                    timeout=180,
                 )
                 elapsed = time.time() - start
 

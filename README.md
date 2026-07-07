@@ -27,6 +27,9 @@ Python 3.11.9
 docker exec -it ollama ollama pull llama3.2:1b
 docker run -d --name ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 
+## 7. streamlit UI 실행
+streamlit run ui.py
+
 ## 문서별 청크 수 확인하기
 python -c "
 import pandas as pd
@@ -46,13 +49,16 @@ print(df[df['filename'] == 'sample1.pdf'][['page', 'chunk_index', 'text']].head(
 python -c "
 import pandas as pd
 df = pd.read_parquet('E:/ragToy/data/processed/chunks.parquet')
-s3 = df[df['filename'] == 'sample3.pdf']
+s3 = df[df['filename'] == '퓨전소프트 규정집(종합본)_2024.06.01.pdf']
 print('청크 수:', len(s3))
 print('텍스트 길이:', s3['text'].str.len().values)
 "
 
-현재 scikit-learn 사용중인데 torch가 좋음
-
+python -c "
+import pandas as pd
+df = pd.read_parquet('data/processed/chunks.parquet')
+print(df.head())
+"
 
 ────────────────────────────────────────────────────────────────────────────────────────────────
 문서 기반 질문
